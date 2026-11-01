@@ -1,0 +1,52 @@
+{
+ "fila": {
+  "largo": 0.3,
+  "alto": 0.1921,
+  "ancho": 0.1182
+ },
+ "asics": {
+  "largo": 0.3,
+  "alto": 0.1268,
+  "ancho": 0.1304
+ },
+ "pegasus-trail": {
+  "largo": 0.3,
+  "alto": 0.1457,
+  "ancho": 0.1525
+ },
+ "reebok-nano": {
+  "largo": 0.3,
+  "alto": 0.1228,
+  "ancho": 0.117
+ },
+ "nb-997": {
+  "largo": 0.3,
+  "alto": 0.1555,
+  "ancho": 0.1114
+ },
+ "converse": {
+  "largo": 0.3,
+  "alto": 0.1663,
+  "ancho": 0.1227
+ },
+ "ozweego": {
+  "largo": 0.3,
+  "alto": 0.1411,
+  "ancho": 0.1136
+ },
+ "old-skool": {
+  "largo": 0.3,
+  "alto": 0.1172,
+  "ancho": 0.1098
+ },
+ "xt6": {
+  "largo": 0.3,
+  "alto": 0.1223,
+  "ancho": 0.123
+ },
+ "racer-tr21": {
+  "largo": 0.3,
+  "alto": 0.1549,
+  "ancho": 0.1216
+ }
+}
