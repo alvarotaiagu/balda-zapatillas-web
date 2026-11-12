@@ -97,13 +97,15 @@ function enfocar(i, { desdeHash = false } = {}) {
   estado.vista?.enfocar(i);
   if (!desdeHash) history.replaceState(null, '', `#${PRODUCTOS[i].slug}`);
   ocultarPista();
+  mostrarPistaGiro(true);
 }
 function volverPared() {
   if (estado.modo !== 'foco') return;
   const i = estado.i;
   estado.modo = 'pared';
   estado.i = null;
-  html.classList.remove('en-foco');
+  html.classList.remove('en-foco', 'girando');
+  mostrarPistaGiro(false);
   ficha.hidden = true;
   $('#pasos').hidden = true;
   $('#volver').hidden = true;
@@ -120,6 +122,11 @@ $('#siguiente').addEventListener('click', () => paso(1));
 
 /* ---------- Gestos: ratón, teclado, dedo ---------- */
 let arrastre = null, acabaDeArrastrar = false;
+// En 3D, la zapatilla abierta se gira arrastrando y se acerca con la rueda o pellizcando.
+const giraEn3D = () => estado.modo === 'foco' && html.classList.contains('modo-3d');
+const toques = new Map();
+let pellizco = null, ultimoToque = null;
+const distancia = () => { const [a, b] = [...toques.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
 botones.forEach((b, i) => {
   b.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') resaltar(i); });
   b.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse' && estado.resaltada === i) resaltar(null); });
@@ -134,32 +141,84 @@ botones.forEach((b, i) => {
 
 const escenario = $('#escenario');
 escenario.addEventListener('pointermove', (e) => {
-  if (e.pointerType === 'mouse') {
+  if (toques.has(e.pointerId)) toques.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pellizco && toques.size === 2) {
+    const d = distancia();
+    if (d > 0 && pellizco.d > 0) { estado.vista?.acercar?.(pellizco.d / d); usoGiro(); }
+    pellizco.d = d;
+    return;
+  }
+  if (e.pointerType === 'mouse' && !arrastre?.movido) {
     const nx = (e.clientX / innerWidth) * 2 - 1, ny = (e.clientY / innerHeight) * 2 - 1;
     estado.vista?.puntero?.(nx, ny);
   }
   if (!arrastre || arrastre.id !== e.pointerId) return;
   const dx = e.clientX - arrastre.x0, dy = e.clientY - arrastre.y0;
-  if (!arrastre.movido && Math.hypot(dx, dy) > 8) arrastre.movido = true;
-  if (arrastre.movido && estado.modo === 'pared') estado.vista?.arrastrar?.(e.clientX - arrastre.xu);
-  arrastre.xu = e.clientX;
+  if (!arrastre.movido && Math.hypot(dx, dy) > (giraEn3D() ? 3 : 8)) {
+    arrastre.movido = true;
+    // Ya es un giro (no un clic): que siga aunque el puntero pase por encima de la tarjeta.
+    if (giraEn3D()) try { escenario.setPointerCapture(e.pointerId); } catch {}
+  }
+  if (arrastre.movido) {
+    if (estado.modo === 'pared') estado.vista?.arrastrar?.(e.clientX - arrastre.xu);
+    else if (giraEn3D()) {
+      estado.vista?.girar?.(e.clientX - arrastre.xu, e.clientY - arrastre.yu);
+      html.classList.add('girando');
+      usoGiro();
+    }
+  }
+  arrastre.xu = e.clientX; arrastre.yu = e.clientY;
 });
 escenario.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'mouse' && e.button !== 0) return;
-  arrastre = { id: e.pointerId, x0: e.clientX, y0: e.clientY, xu: e.clientX, movido: false };
+  if (e.isPrimary) { toques.clear(); pellizco = null; }   // gesto nuevo: fuera toques que no llegaron a soltarse
+  toques.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (toques.size === 2 && giraEn3D()) {
+    // Dos dedos: deja de girar y pasa a acercar.
+    if (arrastre?.movido) { acabaDeArrastrar = true; setTimeout(() => { acabaDeArrastrar = false; }, 0); }
+    arrastre = null;
+    html.classList.remove('girando');
+    estado.vista?.soltarGiro?.();
+    pellizco = { d: distancia() };
+    return;
+  }
+  if (toques.size > 1) return;
+  arrastre = { id: e.pointerId, x0: e.clientX, y0: e.clientY, xu: e.clientX, yu: e.clientY, movido: false };
 });
 const finArrastre = (e) => {
+  toques.delete(e.pointerId);
+  if (toques.size < 2) pellizco = null;
   if (!arrastre || arrastre.id !== e.pointerId) return;
   const dx = e.clientX - arrastre.x0, dy = e.clientY - arrastre.y0;
   if (arrastre.movido) {
     acabaDeArrastrar = true;
     setTimeout(() => { acabaDeArrastrar = false; }, 0);
-    if (estado.modo === 'foco' && Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) paso(dx < 0 ? 1 : -1);
+    if (giraEn3D()) { html.classList.remove('girando'); estado.vista?.soltarGiro?.(); }
+    // Sin 3D (la imagen fija), deslizar sigue pasando de zapatilla.
+    else if (estado.modo === 'foco' && Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) paso(dx < 0 ? 1 : -1);
     estado.vista?.soltarArrastre?.();
     ocultarPista();
+  } else if (giraEn3D() && e.type === 'pointerup' && e.pointerType !== 'mouse' && !e.target.closest?.('.zona:not(.actual)')) {
+    // Doble toque con el dedo: otra vez de frente (con el ratón lo hace el doble clic).
+    const ahora = performance.now();
+    if (ultimoToque && ahora - ultimoToque.t < 320 && Math.hypot(e.clientX - ultimoToque.x, e.clientY - ultimoToque.y) < 30) {
+      estado.vista?.reiniciar?.(); ultimoToque = null;
+    } else ultimoToque = { t: ahora, x: e.clientX, y: e.clientY };
   }
   arrastre = null;
 };
+escenario.addEventListener('wheel', (e) => {
+  if (!giraEn3D()) return;
+  e.preventDefault();
+  const px = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? innerHeight : 1);
+  estado.vista?.acercar?.(Math.exp(Math.max(-120, Math.min(120, px)) * 0.0016));
+  usoGiro();
+}, { passive: false });
+escenario.addEventListener('dblclick', (e) => {
+  if (!giraEn3D() || e.target.closest('.zona:not(.actual)')) return;
+  estado.vista?.reiniciar?.();
+});
+$('#centrar').addEventListener('click', () => estado.vista?.reiniciar?.());
 escenario.addEventListener('pointerup', finArrastre);
 escenario.addEventListener('pointercancel', finArrastre);
 
@@ -169,6 +228,21 @@ document.addEventListener('keydown', (e) => {
   if (!$('#bolsa').hidden && e.key === 'Escape') { cerrarBolsa(); return; }
   if (e.key === 'Escape') { volverPared(); return; }
   if (e.target.closest?.('input, .tallas')) return;
+  // En 3D, con la zapatilla abierta: flechas para girarla, + y − para acercar, 0 para verla de frente
+  // y [ ] (o Re Pág / Av Pág) para pasar de zapatilla.
+  if (giraEn3D()) {
+    const v = estado.vista, q = Math.PI / 8;
+    const teclas = {
+      ArrowLeft: () => v.girarPaso(-q, 0), ArrowRight: () => v.girarPaso(q, 0),
+      ArrowUp: () => v.girarPaso(0, -0.25), ArrowDown: () => v.girarPaso(0, 0.25),
+      '+': () => v.acercar(0.85), '=': () => v.acercar(0.85), '-': () => v.acercar(1 / 0.85),
+      '0': () => v.reiniciar(), Home: () => v.reiniciar(),
+      '[': () => paso(-1), PageUp: () => paso(-1), ']': () => paso(1), PageDown: () => paso(1),
+    };
+    const f = teclas[e.key];
+    if (f) { e.preventDefault(); f(); if (!/[[\]]|Page/.test(e.key)) usoGiro(); }
+    return;
+  }
   if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
     const d = e.key === 'ArrowRight' ? 1 : -1;
     if (estado.modo === 'foco') { e.preventDefault(); paso(d); return; }
@@ -185,6 +259,17 @@ document.addEventListener('keydown', (e) => {
 const pista = $('#pista');
 if (matchMedia('(hover: none)').matches) pista.textContent = 'Arrastra la pared · Toca una zapatilla';
 function ocultarPista() { pista.classList.add('oculta'); }
+// La de girar sale al abrir una zapatilla en 3D, hasta que la mueves por primera vez.
+const pistaGiro = $('#pista-giro');
+if (matchMedia('(hover: none)').matches) pistaGiro.textContent = 'Arrastra para girarla · Pellizca para acercar · Doble toque, de frente';
+let giroVisto = leer('balda-giro-visto', false);
+function mostrarPistaGiro(si) { pistaGiro.classList.toggle('visible', si && !giroVisto && html.classList.contains('modo-3d')); }
+function usoGiro() {
+  if (giroVisto) return;
+  giroVisto = true;
+  guardar('balda-giro-visto', true);
+  mostrarPistaGiro(false);
+}
 
 /* ---------- Bolsa (simulada) ---------- */
 let bolsa = leer('balda-bolsa', []).filter((x) => PRODUCTOS.some((p) => p.slug === x.slug));
@@ -293,13 +378,16 @@ function medida({ fps, nitidez, calidad }) {
 
 async function montar3D() {
   const medidas = await fetch('modelos/medidas.json').then((r) => r.json());
-  const { crearEscena } = await import('./escena.js');
+  const { crearEscena } = await import('./escena.js?v=giro1');
   const vista = await crearEscena({
     lienzo: $('#lienzo'), productos: PRODUCTOS, medidas, reducido,
     alRects: colocarBotones, alProgreso: progreso, alMedida: medida, captura: params.has('captura'),
   });
   html.classList.add('modo-3d');
-  vista.alPerderContexto(() => { html.classList.remove('modo-3d'); montarLamina(); });
+  $('#centrar').hidden = false;
+  $('#pasos-teclas').hidden = false;
+  for (const b of ['#anterior', '#siguiente', '#centrar']) $(b).setAttribute('aria-describedby', 'pasos-teclas');
+  vista.alPerderContexto(() => { html.classList.remove('modo-3d', 'girando'); montarLamina(); });
   if (html.classList.contains('sobria')) vista.densidad('sobria');
   if (params.has('captura')) prepararCaptura(vista);
   return vista;
@@ -310,6 +398,10 @@ async function montarLamina() {
   rectsEscena = null;
   html.classList.remove('modo-3d');
   html.classList.add('plan-b');
+  $('#centrar').hidden = true;
+  $('#pasos-teclas').hidden = true;
+  for (const b of ['#anterior', '#siguiente', '#centrar']) $(b).removeAttribute('aria-describedby');
+  mostrarPistaGiro(false);
   botones.forEach((b) => { b.style.transform = ''; });
   const marco = $('#lamina-marco'), lamina = $('#lamina'), img = $('#lamina img');
   marco.hidden = false;

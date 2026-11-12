@@ -14,6 +14,11 @@ const PASO = 0.38;                 // entre centros de balda
 const FILAS = [0.19, -0.21];        // cara de arriba de cada fila de baldas
 const ANCHO_BALDA = 0.33, GROSOR = 0.012, FONDO = 0.17;
 const Z_ZAP = 0.088;               // centro de la zapatilla sobre la balda
+// Al abrir una zapatilla se saca de la balda: hacia delante y hacia arriba, para que pueda dar
+// la vuelta entera (mide 30 cm y la balda 17) y enseñar la suela sin meterse en la pared ni en el cristal.
+const ADELANTE = 0.095, PIVOTE = 0.185;   // centro de la zapatilla sacada: delante del canto y sobre la balda
+const INCL_MIN = -1.15, INCL_MAX = 0.65;  // hacia atrás (suela) y hacia delante (por dentro)
+const ZOOM_MIN = 0.45, ZOOM_MAX = 1.2;    // parte de la distancia de la cámara
 const FOV = 28;
 const T = Math.tan(THREE.MathUtils.degToRad(FOV / 2));
 const CONTENIDO = { ancho: 5 * PASO + 0.25, alto: 0.9, centroY: 0.075 };
@@ -88,7 +93,12 @@ export async function crearEscena({ lienzo, productos, medidas, reducido, alRect
   const texHalo = texturaHalo();
   const n = productos.length;
   const baldas = [], cantos = [], brillos = [], halos = [], grupos = [];
+  // grupo (en la balda; se saca) → pivote (centro de la zapatilla; gira) → asiento (lo devuelve) → modelo
+  const pivotes = [], asientos = [], centros = [];
   const encendido = new Float32Array(n), objetivo = new Float32Array(n);
+  const sacada = new Float32Array(n);                         // 0 en la balda, 1 en la mano
+  const giroY = new Float32Array(n), giroYObj = new Float32Array(n);
+  const incl = new Float32Array(n), inclObj = new Float32Array(n);
 
   for (let i = 0; i < n; i++) {
     const { x, y } = bahia(i);
@@ -121,8 +131,13 @@ export async function crearEscena({ lienzo, productos, medidas, reducido, alRect
     brillo.position.set(x, y - 0.06, 0.0015);
     const grupo = new THREE.Group();
     grupo.position.set(x, y, Z_ZAP);
+    const pivote = new THREE.Group(), asiento = new THREE.Group();
+    const centro = new V(0, (medidas[productos[i].slug]?.alto ?? 0.15) / 2, 0);
+    pivote.position.copy(centro); asiento.position.copy(centro).negate();
+    pivote.add(asiento); grupo.add(pivote);
     scene.add(balda, canto, halo, brillo, grupo);
     baldas.push(balda); cantos.push(canto); halos.push(halo); brillos.push(brillo); grupos.push(grupo);
+    pivotes.push(pivote); asientos.push(asiento); centros.push(centro);
   }
 
   let densidad = 'escaparate';
@@ -132,7 +147,10 @@ export async function crearEscena({ lienzo, productos, medidas, reducido, alRect
   const off = new V(), offObj = new V();
   let anim = null, modo = 'pared', actual = null;
   let panX = 0, panV = 0, arrastrando = false;
-  let giro = 0, giroObj = 0;
+  // Girar la zapatilla abierta: arrastre con inercia, rueda o pellizco para acercar.
+  let girando = false, velY = 0, velI = 0, ultGiro = 0;
+  let zoom = 1, zoomObj = 1;
+  const zoomCentro = new V();
 
   const aspecto = () => camera.aspect;
   const vertical = () => aspecto() < 0.9;
@@ -149,15 +167,32 @@ export async function crearEscena({ lienzo, productos, medidas, reducido, alRect
     const x = vertical() ? panX : 0;
     return { pos: new V(x, CONTENIDO.centroY + 0.02, d), mira: new V(x, CONTENIDO.centroY, 0) };
   }
+  // Dónde queda el centro de la zapatilla cuando está sacada de la balda.
+  const centroSacada = (i) => { const { x, y } = bahia(i); return new V(x, y + PIVOTE, Z_ZAP + ADELANTE); };
   function encuadreFoco(i) {
-    const a = aspecto(), { x, y } = bahia(i);
-    const alto = medidas[productos[i].slug]?.alto ?? 0.15;
+    const a = aspecto();
+    const c = centroSacada(i);
     const f = a < 0.9 ? 0.84 : 0.5;            // parte del ancho que ocupa la zapatilla
     const visW = 0.3 / f, d = visW / (2 * T * a), visH = 2 * d * T;
     const ox = a < 0.9 ? 0 : visW * 0.035;     // un poco a la izquierda: la tarjeta va a la derecha
     const oy = a < 0.9 ? -visH * 0.13 : -visH * 0.02;  // en el móvil, más arriba: la tarjeta va abajo
-    const cy = y + alto / 2;
-    return { pos: new V(x + ox, cy + oy + 0.035, Z_ZAP + d), mira: new V(x + ox, cy + oy, Z_ZAP) };
+    return { pos: new V(c.x + ox, c.y + oy + 0.035, c.z + d), mira: new V(c.x + ox, c.y + oy, c.z) };
+  }
+  // Pose de cada zapatilla: sacada (0-1) y girada.
+  function aplicarPose(i) {
+    const { x, y } = bahia(i), c = centros[i], s = sacada[i];
+    grupos[i].position.set(x - c.x * s, y + (PIVOTE - c.y) * s, Z_ZAP + (ADELANTE - c.z) * s);
+    pivotes[i].rotation.set(incl[i], giroY[i], 0);   // orden XYZ: gira sobre su eje y luego se inclina hacia ti
+  }
+  const vueltaMasCercana = (r) => Math.round(r / (2 * Math.PI)) * 2 * Math.PI;
+  function devolver(i) { giroYObj[i] = vueltaMasCercana(giroY[i]); inclObj[i] = 0; }
+  // Antes de mover la cámara a otro sitio, el acercamiento pasa a formar parte de su posición (sin saltos).
+  function aplanarZoom() {
+    if (zoom !== 1) {
+      base.pos.sub(zoomCentro).multiplyScalar(zoom).add(zoomCentro);
+      base.mira.sub(zoomCentro).multiplyScalar(zoom).add(zoomCentro);
+    }
+    zoom = zoomObj = 1;
   }
   function ir(destino, dur, arco = 0) {
     if (reducido() || dur === 0) { base.pos.copy(destino.pos); base.mira.copy(destino.mira); anim = null; despertar(); return; }
@@ -167,7 +202,7 @@ export async function crearEscena({ lienzo, productos, medidas, reducido, alRect
 
   /* ---------- Bucle: solo pinta si algo cambia ---------- */
   let raf = 0, prev = 0, sombrasSucias = true, seguido = false, cuentaGiro = 0;
-  const tmp = new V();
+  const tmp = new V(), tmp2 = new V();
   function despertar() { if (!raf) { prev = performance.now(); raf = requestAnimationFrame(cuadro); } }
 
   /* Calidad automática: si los fotogramas seguidos van lentos, baja la nitidez (1 y luego 0,8). */
@@ -213,13 +248,47 @@ export async function crearEscena({ lienzo, productos, medidas, reducido, alRect
     const k = 1 - Math.exp(-dt * 4);
     off.lerp(offObj, k);
     if (off.distanceToSquared(offObj) > 1e-9) sigue = true;
-    const g = giro;
-    giro += (giroObj - giro) * k;
-    if (Math.abs(giroObj - giro) > 1e-4) sigue = true;
-    if (actual !== null && Math.abs(g - giro) > 1e-5) {
-      grupos[actual].rotation.y = giro;
-      if (++cuentaGiro % 4 === 0 || Math.abs(giroObj - giro) <= 1e-4) sombrasSucias = true;
+    // Inercia del giro al soltar (sin ella con movimiento reducido).
+    if (actual !== null && !girando && (velY || velI)) {
+      if (reducido()) { velY = velI = 0; }
+      else {
+        giroYObj[actual] += velY * dt;
+        inclObj[actual] = THREE.MathUtils.clamp(inclObj[actual] + velI * dt, INCL_MIN, INCL_MAX);
+        const fr = Math.exp(-dt * 3.2); velY *= fr; velI *= fr;
+        if (Math.abs(velY) < 0.02 && Math.abs(velI) < 0.02) velY = velI = 0;
+        sigue = true;
+      }
     }
+    // Sacar, girar y devolver. La que tienes en la mano sigue al dedo casi al instante; las demás
+    // vuelven a su balda sin prisa (y primero se enderezan, para no rozar la pared).
+    const kMano = 1 - Math.exp(-dt * 16);
+    const kVuelta = reducido() ? 1 : 1 - Math.exp(-dt * 6);
+    let cambia = false, quieta = true;
+    for (let i = 0; i < n; i++) {
+      const es = i === actual;
+      // La que vuelve se queda fuera mientras siga torcida y entra cuando ya está casi derecha.
+      const torcida = es ? 0 : Math.min(1, Math.abs(giroYObj[i] - giroY[i]) / 0.5 + Math.abs(incl[i]) / 0.35);
+      const sObj = es ? 1 : torcida;
+      const ks = reducido() ? 1 : 1 - Math.exp(-dt * (es ? 5 : 3.5));
+      const kg = es ? kMano : kVuelta;
+      const s0 = sacada[i], y0 = giroY[i], i0 = incl[i];
+      sacada[i] += (sObj - sacada[i]) * ks;
+      giroY[i] += (giroYObj[i] - giroY[i]) * kg;
+      incl[i] += (inclObj[i] - incl[i]) * kg;
+      if (Math.abs(sObj - sacada[i]) < 5e-4) sacada[i] = sObj;
+      if (Math.abs(giroYObj[i] - giroY[i]) < 5e-4) giroY[i] = giroYObj[i];
+      if (Math.abs(inclObj[i] - incl[i]) < 5e-4) incl[i] = inclObj[i];
+      // Ya en su sitio: se olvida de las vueltas que dio.
+      if (!es && sacada[i] === 0 && giroY[i] === giroYObj[i] && giroY[i] !== 0) giroY[i] = giroYObj[i] = 0;
+      if (s0 !== sacada[i] || y0 !== giroY[i] || i0 !== incl[i]) {
+        aplicarPose(i); cambia = true;
+        if (sacada[i] !== sObj || giroY[i] !== giroYObj[i] || incl[i] !== inclObj[i]) { sigue = true; quieta = false; }
+      }
+    }
+    // Las sombras se recalculan cada pocos fotogramas mientras se mueve, y una vez al pararse.
+    if (cambia && (++cuentaGiro % 4 === 0 || quieta)) sombrasSucias = true;
+    zoom += (zoomObj - zoom) * (reducido() ? 1 : 1 - Math.exp(-dt * 10));
+    if (Math.abs(zoomObj - zoom) < 5e-4) zoom = zoomObj; else sigue = true;
 
     const ke = 1 - Math.exp(-dt * 9);
     const acento = densidad === 'sobria' ? ACENTO_SOBRIO : ACENTO;
@@ -238,8 +307,9 @@ export async function crearEscena({ lienzo, productos, medidas, reducido, alRect
       brillos[i].material.opacity = e * (sobria ? 0.12 : 0.45);
     }
 
-    camera.position.copy(base.pos).add(off);
-    camera.lookAt(tmp.copy(base.mira).addScaledVector(off, 0.35));
+    // Acercar: cámara y punto de mira se acercan juntos al centro de la zapatilla, que crece sin moverse de su sitio.
+    camera.position.copy(zoomCentro).add(tmp.subVectors(base.pos, zoomCentro).multiplyScalar(zoom)).add(off);
+    camera.lookAt(tmp.copy(zoomCentro).add(tmp2.subVectors(base.mira, zoomCentro).multiplyScalar(zoom)).addScaledVector(off, 0.35));
     if (!anim) aplicarPendientes();
     pintar();
     emitirRects();
@@ -308,9 +378,18 @@ export async function crearEscena({ lienzo, productos, medidas, reducido, alRect
       for (const m of mats) { for (const v of Object.values(m)) if (v && v.isTexture) v.dispose(); m.dispose(); }
     });
   }
+  const caja = new THREE.Box3();
   function colocar(i, raiz) {
-    const g = grupos[i];
+    const g = asientos[i];
     for (const c of [...g.children]) { g.remove(c); soltar(c); }
+    // Gira sobre su centro de verdad (el de su caja), no sobre el que dicen las medidas.
+    caja.setFromObject(raiz);
+    if (!caja.isEmpty()) {
+      caja.getCenter(centros[i]);
+      pivotes[i].position.copy(centros[i]);
+      asientos[i].position.copy(centros[i]).negate();
+      aplicarPose(i);
+    }
     g.add(raiz);
     sombrasSucias = true;
     despertar();
@@ -382,8 +461,9 @@ export async function crearEscena({ lienzo, productos, medidas, reducido, alRect
     },
     enfocar(i) {
       const antes = modo === 'foco' ? actual : null;
-      if (antes !== null && antes !== i) { grupos[antes].rotation.y = 0; sombrasSucias = true; }
-      giro = 0; giroObj = 0;
+      if (antes !== null && antes !== i) devolver(antes);   // la anterior vuelve a su balda
+      girando = false; velY = velI = 0;
+      aplanarZoom();
       if (i === null) {
         modo = 'pared'; actual = null;
         objetivo.fill(0);
@@ -391,6 +471,8 @@ export async function crearEscena({ lienzo, productos, medidas, reducido, alRect
         return;
       }
       modo = 'foco'; actual = i;
+      giroYObj[i] = vueltaMasCercana(giroY[i]); inclObj[i] = 0;   // sale de frente
+      zoomCentro.copy(centroSacada(i));
       objetivo.fill(0); objetivo[i] = 1;
       cargarDetalle(i).then(() => { if (actual === i && !movil) { cargarDetalle((i + 1) % n); cargarDetalle((i + n - 1) % n); } });
       // De la pared a una zapatilla: acercarse. De una a otra: recorrer la pared, separándose un poco.
@@ -398,10 +480,53 @@ export async function crearEscena({ lienzo, productos, medidas, reducido, alRect
       else ir(encuadreFoco(i), 900 + 120 * Math.min(4, Math.abs(i - antes)), 0.12);
     },
     puntero(nx, ny) {
-      if (densidad === 'sobria') { offObj.set(0, 0, 0); giroObj = 0; despertar(); return; }
-      const amp = modo === 'foco' ? 0.018 : 0.05;
+      if (densidad === 'sobria') { offObj.set(0, 0, 0); despertar(); return; }
+      const amp = modo === 'foco' ? 0.012 : 0.05;
       offObj.set(nx * amp, -ny * amp * 0.6, 0);
-      giroObj = modo === 'foco' ? nx * 0.28 : 0;
+      despertar();
+    },
+    /* Girar la zapatilla abierta con el ratón o el dedo (píxeles desde el último movimiento). */
+    girar(dxPx, dyPx) {
+      if (modo !== 'foco' || actual === null) return;
+      // Una vuelta entera ≈ el ancho de la pantalla (entre 420 y 900 px).
+      const porPx = (2 * Math.PI) / THREE.MathUtils.clamp(lienzo.clientWidth * 0.9, 420, 900);
+      const dY = dxPx * porPx;
+      const i0 = inclObj[actual];
+      giroYObj[actual] += dY;
+      inclObj[actual] = THREE.MathUtils.clamp(i0 + dyPx * porPx * 0.8, INCL_MIN, INCL_MAX);
+      const ahora = performance.now(), dtg = Math.max(8, ahora - ultGiro) / 1000;
+      ultGiro = ahora;
+      const lim = 14, vy = dY / dtg, vi = (inclObj[actual] - i0) / dtg;
+      velY = THREE.MathUtils.clamp(dtg < 0.1 ? velY * 0.4 + vy * 0.6 : vy, -lim, lim);
+      velI = THREE.MathUtils.clamp(dtg < 0.1 ? velI * 0.4 + vi * 0.6 : vi, -lim, lim);
+      girando = true;
+      despertar();
+    },
+    soltarGiro() {
+      girando = false;
+      if (performance.now() - ultGiro > 90) velY = velI = 0;   // se paró antes de soltar: sin inercia
+      despertar();
+    },
+    /* Teclado: giro e inclinación por pasos. */
+    girarPaso(dY, dI) {
+      if (modo !== 'foco' || actual === null) return;
+      velY = velI = 0;
+      giroYObj[actual] += dY;
+      inclObj[actual] = THREE.MathUtils.clamp(inclObj[actual] + dI, INCL_MIN, INCL_MAX);
+      despertar();
+    },
+    /* f < 1 acerca, f > 1 aleja. */
+    acercar(f) {
+      if (modo !== 'foco' || actual === null) return;
+      zoomObj = THREE.MathUtils.clamp(zoomObj * f, ZOOM_MIN, ZOOM_MAX);
+      despertar();
+    },
+    /* Otra vez de frente y a la distancia de antes. */
+    reiniciar() {
+      if (modo !== 'foco' || actual === null) return;
+      velY = velI = 0;
+      devolver(actual);
+      zoomObj = 1;
       despertar();
     },
     arrastrar(dxPx) {
@@ -415,7 +540,7 @@ export async function crearEscena({ lienzo, productos, medidas, reducido, alRect
     soltarArrastre() { arrastrando = false; despertar(); },
     densidad(d) {
       densidad = d;
-      if (d === 'sobria') { offObj.set(0, 0, 0); giroObj = 0; }
+      if (d === 'sobria') offObj.set(0, 0, 0);
       despertar();
     },
     alPerderContexto(f) { alPerder = f; },
@@ -429,6 +554,10 @@ export async function crearEscena({ lienzo, productos, medidas, reducido, alRect
       camera.aspect = W / H; camera.updateProjectionMatrix();
       const e = encuadrePared();
       objetivo.fill(0); encendido.fill(0);
+      // Todas en su balda y de perfil, sin esperar a que vuelvan solas.
+      sacada.fill(0); giroY.fill(0); giroYObj.fill(0); incl.fill(0); inclObj.fill(0);
+      zoom = zoomObj = 1;
+      for (let i = 0; i < n; i++) aplicarPose(i);
       for (let i = 0; i < n; i++) { cantos[i].material.color.copy(CANTO); halos[i].material.opacity = 0; baldas[i].material.emissiveIntensity = 0; brillos[i].material.opacity = 0; }
       camera.position.copy(e.pos); camera.lookAt(e.mira);
       sombrasSucias = true;

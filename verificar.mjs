@@ -256,8 +256,8 @@ try {
     console.log('\n5. Aviso legal y 404');
     const { ctx, page } = await nuevo();
     await page.goto(BASE + 'legal.html');
-    const l = await page.evaluate(() => ({ cookies: !!document.querySelector('#cookies'), claves: ['balda-bolsa', 'balda-cookies', 'balda-densidad'].every((k) => document.body.textContent.includes(k)), cc: /Creative Commons/.test(document.body.textContent) }));
-    comprobar(l.cookies && l.claves, 'legal explica las tres claves que se guardan');
+    const l = await page.evaluate(() => ({ cookies: !!document.querySelector('#cookies'), claves: ['balda-bolsa', 'balda-cookies', 'balda-giro-visto', 'balda-densidad'].every((k) => document.body.textContent.includes(k)), cc: /Creative Commons/.test(document.body.textContent) }));
+    comprobar(l.cookies && l.claves, 'legal explica las cuatro claves que se guardan');
     comprobar(l.cc, 'legal cita la licencia de los modelos');
     await page.goto(BASE + '404.html');
     comprobar(await page.isVisible('a[href="./"]'), '404 con vuelta a la pared');

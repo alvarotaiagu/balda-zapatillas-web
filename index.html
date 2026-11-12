@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="css/balda.css">
+<link rel="stylesheet" href="css/balda.css?v=giro1">
 <script>
   // Densidad guardada: solo se aplica con ?revision (el enlace del cliente sale limpio).
   (function () {
@@ -78,8 +78,12 @@
   <button type="button" id="anterior" aria-label="Zapatilla anterior">‹</button>
   <span id="paso-actual">01 / 10</span>
   <button type="button" id="siguiente" aria-label="Zapatilla siguiente">›</button>
+  <button type="button" class="centrar" id="centrar" aria-label="Verla otra vez de frente" title="Verla otra vez de frente" hidden><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M3.2 8a4.8 4.8 0 1 0 1.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M4.4 1.9v2.9h2.9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   <span class="pasos-esc" aria-hidden="true">Esc para volver</span>
+  <span class="oculto" id="pasos-teclas" hidden>Con el teclado: flechas para girar la zapatilla, más y menos para acercarla, cero para verla de frente, corchetes para pasar de zapatilla y Escape para volver a la pared.</span>
 </nav>
+
+<p class="pista-giro" id="pista-giro" aria-hidden="true">Arrastra para girarla · Rueda para acercar · Doble clic, de frente</p>
 
 <footer class="pie">
   <button type="button" id="creditos-boton">Créditos</button>
@@ -97,7 +101,7 @@
 </dialog>
 
 <div class="cookies" id="cookies" role="region" aria-label="Aviso de cookies" hidden>
-  <p>Esta web no usa cookies. Guarda en tu navegador lo que metas en la bolsa y que has leído este aviso. <a href="legal.html#cookies">Más información</a></p>
+  <p>Esta web no usa cookies. Guarda en tu navegador lo que metas en la bolsa, que has leído este aviso y si ya has girado una zapatilla. <a href="legal.html#cookies">Más información</a></p>
   <button type="button" id="cookies-ok">Entendido</button>
 </div>
 
@@ -109,6 +113,6 @@
 
 <noscript><p class="sin-js">Esta pared necesita JavaScript. <a href="img/pared.webp">Ver la imagen de la pared</a>.</p></noscript>
 
-<script type="module" src="js/app.js"></script>
+<script type="module" src="js/app.js?v=giro1"></script>
 </body>
 </html>

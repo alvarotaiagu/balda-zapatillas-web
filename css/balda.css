@@ -262,6 +262,32 @@ html:not(.modo-3d):not(.plan-b) .zona { display: none; }
 .pasos button { width: 34px; height: 34px; border-radius: 50%; font-size: 18px; line-height: 1; }
 .pasos button:hover { background: rgba(237, 235, 231, 0.08); }
 .pasos #paso-actual { padding: 0 6px; }
+.pasos .centrar { display: grid; place-items: center; margin-left: 2px; color: var(--tinta-2); }
+.pasos .centrar:hover { color: var(--tinta); }
+
+/* En 3D, la zapatilla abierta se coge y se gira. */
+.modo-3d.en-foco .escenario { cursor: grab; }
+.modo-3d.en-foco.girando .escenario, .modo-3d.en-foco.girando .zona { cursor: grabbing; }
+.pista-giro {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--margen) + 54px);
+  z-index: 2;
+  margin: 0;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: var(--panel);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--tinta);
+  font-size: 11.5px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 4px);
+  transition: opacity 0.4s, transform 0.4s var(--curva);
+}
+.pista-giro.visible { opacity: 1; transform: translate(-50%, 0); transition-delay: 1.3s; }
 .pasos-esc { padding: 0 12px 0 8px; margin-left: 2px; border-left: 1px solid var(--linea); color: var(--tinta-2); }
 
 /* ---------- Pie y pista ---------- */
@@ -382,6 +408,7 @@ html:not(.modo-3d):not(.plan-b) .zona { display: none; }
   .ficha .nota { display: none; }
   .pasos { top: calc(var(--margen) + 46px); bottom: auto; }
   .pasos-esc { display: none; }
+  .pista-giro { top: calc(var(--margen) + 94px); bottom: auto; max-width: calc(100vw - 2 * var(--margen)); white-space: normal; text-align: center; width: max-content; }
   .en-foco .pie { display: none; }
   .pista { left: var(--margen); right: auto; bottom: calc(var(--margen) + 20px); }
   .cookies { bottom: calc(var(--margen) + 46px); flex-direction: column; align-items: stretch; }
@@ -393,4 +420,5 @@ html:not(.modo-3d):not(.plan-b) .zona { display: none; }
   .lamina { transition: none; }
   .ficha { animation: none; }
   .bolsa-boton.latido { animation: none; }
+  .pista-giro { transition: opacity 0.2s; transform: translate(-50%, 0); }
 }
